@@ -741,9 +741,34 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
       // Convert segmentIds to a Set for quick lookup
       const validSegmentIds = new Set(segmentIds);
 
-      // Start traversal from the first segment in the list
-      const initialSegmentId = segmentIds[0];
-      const { fromNodeId, toNodeId } = getSegment(initialSegmentId);
+      // Find the best starting segment (one with only one connection to other selected segments)
+      let initialSegmentId = segmentIds[0];
+      let startNodeId = null;
+      
+      for (const segmentId of segmentIds) {
+        const { fromNodeId, toNodeId } = getSegment(segmentId);
+        const fromConnections = getConnectedSegments(fromNodeId).filter(s => validSegmentIds.has(s) && s !== segmentId);
+        const toConnections = getConnectedSegments(toNodeId).filter(s => validSegmentIds.has(s) && s !== segmentId);
+        
+        // If this segment has only one connection (it's an endpoint), use it as start
+        if (fromConnections.length === 0 && toConnections.length === 1) {
+          initialSegmentId = segmentId;
+          startNodeId = toNodeId; // Start traversing from the connected end
+          break;
+        } else if (toConnections.length === 0 && fromConnections.length === 1) {
+          initialSegmentId = segmentId;
+          startNodeId = fromNodeId; // Start traversing from the connected end
+          break;
+        }
+      }
+      
+      // If no endpoint found, use the first segment
+      if (startNodeId === null) {
+        const { fromNodeId, toNodeId } = getSegment(initialSegmentId);
+        startNodeId = toNodeId;
+      }
+      
+      const { fromNodeId: initialFromNode, toNodeId: initialToNode } = getSegment(initialSegmentId);
 
       // Queues for forward and backward traversal
       const forwardQueue = [];
@@ -757,10 +782,17 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
         }
       };
 
-      forwardResult.push({ segmentId: initialSegmentId, direction: "fwd" });
+      // Determine the initial direction based on which node we're starting from
+      const initialDirection = startNodeId === initialToNode ? "fwd" : "rev";
+      forwardResult.push({ segmentId: initialSegmentId, direction: initialDirection });
       visitedSegments.add(initialSegmentId);
-      addToQueue(forwardQueue, toNodeId);
-      addToQueue(backwardQueue, fromNodeId);
+      
+      // Add the starting node to the appropriate queue
+      addToQueue(forwardQueue, startNodeId);
+      
+      // Also try the other direction in case there are segments on that side
+      const otherNodeId = startNodeId === initialToNode ? initialFromNode : initialToNode;
+      addToQueue(backwardQueue, otherNodeId);
 
       while (forwardQueue.length > 0) {
         const { segmentId, currentNodeId } = forwardQueue.shift();
