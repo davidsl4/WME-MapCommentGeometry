@@ -11,7 +11,7 @@
 // @downloadURL		https://raw.githubusercontent.com/YULWaze/WME-MapCommentGeometry/main/WME%20MapCommentGeometry.user.js
 // @updateURL		https://raw.githubusercontent.com/YULWaze/WME-MapCommentGeometry/main/WME%20MapCommentGeometry.user.js
 // @supportURL		https://github.com/YULWaze/WME-MapCommentGeometry/issues/new/choose
-// @version 		2025.04.27.1
+// @version 		2025.04.27.2
 // ==/UserScript==
 
 /* global W */
@@ -53,7 +53,7 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
 
 (async function () {
   await SDK_INITIALIZED;
-  const UPDATE_NOTES = "Added ability to create school zones and places";
+  const UPDATE_NOTES = "Fixed polygon geometry for school zones and venues to remove holes (requested by Waze HQ for tile build compatibility)";
   const SCRIPT_NAME = GM_info.script.name;
   const SCRIPT_VERSION = GM_info.script.version;
   const idTitle = 0;
@@ -154,6 +154,33 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
   //	const CommentWidths = [15,20,40,15,15,30,30];
   const DefaultCommentWidth = 10;
   let TheCommentWidth;
+
+  /**
+   * Removes holes from a polygon geometry, keeping only the outer ring.
+   * This is necessary for school zones and venues as requested by Waze HQ for tile build compatibility.
+   * @param geometry The GeoJSON geometry (Polygon or MultiPolygon)
+   * @returns The geometry with only outer rings (no holes)
+   */
+  function removeHolesFromGeometry(geometry) {
+    if (!geometry || !geometry.type) return geometry;
+
+    if (geometry.type === 'Polygon') {
+      // For Polygon, keep only the first coordinate array (outer ring)
+      return {
+        type: 'Polygon',
+        coordinates: [geometry.coordinates[0]]
+      };
+    } else if (geometry.type === 'MultiPolygon') {
+      // For MultiPolygon, keep only the first coordinate array (outer ring) of each polygon
+      return {
+        type: 'MultiPolygon',
+        coordinates: geometry.coordinates.map(polygon => [polygon[0]])
+      };
+    }
+
+    // For other geometry types, return as-is
+    return geometry;
+  }
 
 	function hasSelectedFeatures(featureType) {
 		const selection = wmeSdk.Editing.getSelection();
@@ -342,6 +369,12 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
 
     if (selection.ids.length > 1) {
       console.warn('updateSelectedFeatureGeometry has been called with multiple selected objects, only the first one will be updated');
+    }
+
+    // Remove holes for school zones and venues (requested by Waze HQ for tile build compatibility)
+    const shouldRemoveHoles = selection.objectType === 'permanentHazard' || selection.objectType === 'venue';
+    if (shouldRemoveHoles) {
+      newGeometry = removeHolesFromGeometry(newGeometry);
     }
 
     switch (selection.objectType) {
@@ -579,7 +612,11 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
           permanentHazard: {
             [defaultSymbol]: {
               strictBoundary: true,
+              removeHoles: true,
             },
+          },
+          venue: {
+            removeHoles: true,
           },
           [defaultSymbol]: {},
         };
@@ -834,7 +871,14 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
         );
       }
 
-      return convertToLandmark(lineString, options.width);
+      let geometry = convertToLandmark(lineString, options.width);
+
+      // Remove holes from the geometry if requested (for school zones and venues)
+      if (options.removeHoles) {
+        geometry = removeHolesFromGeometry(geometry);
+      }
+
+      return geometry;
     }
 
     function ensureMetricUnits(value) {
