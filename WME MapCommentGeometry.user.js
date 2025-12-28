@@ -250,20 +250,29 @@
 		const joysticksContainers = $('<div class="form-group" style="display: flex; gap: 12px" />');
 		joysticksContainers.append(
 			createDPadControl("Cameras", [
-				{ name: DPAD_AREA.Up, handler: createUCamera },
-				{ name: DPAD_AREA.Down, handler: createDCamera },
-				{ name: DPAD_AREA.Left, handler: createLCamera },
-				{ name: DPAD_AREA.Right, handler: createRCamera },
+				{ name: DPAD_AREA.Up, handler: () => applyShapeToSelectedFeature(CameraUpPoints) },
+				{ name: DPAD_AREA.Down, handler: () => applyShapeToSelectedFeature(CameraDownPoints) },
+				{ name: DPAD_AREA.Left, handler: () => applyShapeToSelectedFeature(CameraLeftPoints) },
+				{ name: DPAD_AREA.Right, handler: () => applyShapeToSelectedFeature(CameraRightPoints) },
 				{ name: DPAD_AREA.Middle, handler: () => null, isSelectable: false, icon: "speed-camera" },
 			])
 		);
 		joysticksContainers.append(
 			createDPadControl("Arrows", [
-				{ name: DPAD_AREA.Up, handler: createSArrow },
+				{ name: DPAD_AREA.Up, handler: () => applyShapeToSelectedFeature(ArrowStraightPoints) },
 				{ name: "DUMMY", handler: () => null, isSelectable: false },
-				{ name: DPAD_AREA.Left, icon: "turn-left", handler: createLArrow },
-				{ name: DPAD_AREA.Right, icon: "turn-right", handler: createRArrow },
-				{ name: DPAD_AREA.Middle, icon: "pencil", handler: createCustomArrow },
+				{ name: DPAD_AREA.Left, icon: "turn-left", handler: () => applyShapeToSelectedFeature(ArrowLeftPoints) },
+				{ name: DPAD_AREA.Right, icon: "turn-right", handler: () => applyShapeToSelectedFeature(ArrowRightPoints) },
+				{
+          name: DPAD_AREA.Middle,
+          icon: "pencil",
+          handler: async () => {
+            const drawnLine = await wmeSdk.Map.drawLine();
+            const curvedLine = turf.bezierSpline(drawnLine, { sharpness: 0.1 }).geometry;
+            const arrowGeometry = convertLineToArrow(curvedLine);
+            updateSelectedFeatureGeometry(arrowGeometry);
+          }
+        },
 			])
 		);
 
@@ -390,35 +399,6 @@
     const geometryCentroid = turf.centroid(getGeometryOfSelection()).geometry;
     const openLayersCentroid = W.userscripts.toOLGeometry(geometryCentroid);
     updateSelectedFeatureGeometry(getShapeWKT(shapePoints, openLayersCentroid));
-  }
-
-  function createLCamera() {
-    applyShapeToSelectedFeature(CameraLeftPoints);
-  }
-  function createUCamera() {
-    applyShapeToSelectedFeature(CameraUpPoints);
-  }
-  function createRCamera() {
-    applyShapeToSelectedFeature(CameraRightPoints);
-  }
-  function createDCamera() {
-    applyShapeToSelectedFeature(CameraDownPoints);
-  }
-
-  function createLArrow() {
-    applyShapeToSelectedFeature(ArrowLeftPoints);
-  }
-  function createSArrow() {
-    applyShapeToSelectedFeature(ArrowStraightPoints);
-  }
-  function createRArrow() {
-    applyShapeToSelectedFeature(ArrowRightPoints);
-  }
-  async function createCustomArrow() {
-    const drawnLine = await wmeSdk.Map.drawLine();
-    const curvedLine = turf.bezierSpline(drawnLine, { sharpness: 0.1 }).geometry;
-    const arrowGeometry = convertLineToArrow(curvedLine);
-    updateSelectedFeatureGeometry(arrowGeometry);
   }
 
   function getShapeWKT(points, center) {
