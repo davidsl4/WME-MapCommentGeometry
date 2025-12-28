@@ -536,6 +536,290 @@
     }
   }
 
+  /**
+     * Given an unordered list of segment IDs, returns an ordered list of segments with direction information, to form a continuous path
+     * @param {Array<string|number>} segmentIds Array of segment IDs
+     * @param {Function} getSegment A function that takes a `segmentId` and returns a segment object
+     * @param {Function} getConnectedSegments A function that takes a `nodeId` and returns an array of connected segment IDs
+     * @returns {Array<{segmentId: string|number, direction: "fwd"|"rev"}>} Ordered array of segments with direction information
+     */
+  function getSegmentsPath(segmentIds, getSegment, getConnectedSegments) {
+    const visitedSegments = new Set();
+    const forwardResult = [],
+      backwardResult = [];
+
+    // Convert segmentIds to a Set for quick lookup
+    const validSegmentIds = new Set(segmentIds);
+
+    // Start traversal from the first segment in the list
+    const initialSegmentId = segmentIds[0];
+    const { fromNodeId, toNodeId } = getSegment(initialSegmentId);
+
+    // Queues for forward and backward traversal
+    const forwardQueue = [];
+    const backwardQueue = [];
+
+    const addToQueue = (queue, nextNodeId) => {
+      const connectedSegments = getConnectedSegments(nextNodeId);
+      for (const connectedSegment of connectedSegments) {
+        if (!validSegmentIds.has(connectedSegment) || visitedSegments.has(connectedSegment)) continue;
+        queue.push({ segmentId: connectedSegment, currentNodeId: nextNodeId });
+      }
+    };
+
+    forwardResult.push({ segmentId: initialSegmentId, direction: "fwd" });
+    visitedSegments.add(initialSegmentId);
+    addToQueue(forwardQueue, toNodeId);
+    addToQueue(backwardQueue, fromNodeId);
+
+    while (forwardQueue.length > 0) {
+      const { segmentId, currentNodeId } = forwardQueue.shift();
+
+      if (visitedSegments.has(segmentId)) continue;
+      visitedSegments.add(segmentId);
+
+      // Query segment details
+      const { fromNodeId, toNodeId } = getSegment(segmentId);
+
+      // Determine the segment's direction
+      const direction = currentNodeId === fromNodeId ? "fwd" : "rev";
+      forwardResult.push({ segmentId, direction });
+
+      // Get the next node to traverse
+      const nextNodeId = direction === "fwd" ? toNodeId : fromNodeId;
+      addToQueue(forwardQueue, nextNodeId);
+    }
+
+    while (backwardQueue.length > 0) {
+      const { segmentId, currentNodeId } = backwardQueue.shift();
+
+      if (visitedSegments.has(segmentId)) continue;
+      visitedSegments.add(segmentId);
+
+      // Query segment details
+      const { fromNodeId, toNodeId } = getSegment(segmentId);
+
+      // Determine the segment's direction
+      const direction = currentNodeId === fromNodeId ? "rev" : "fwd";
+      backwardResult.push({ segmentId, direction });
+
+      // Get the next node to traverse
+      const nextNodeId = direction === "fwd" ? fromNodeId : toNodeId;
+      addToQueue(backwardQueue, nextNodeId);
+    }
+
+    return [...backwardResult.reverse(), ...forwardResult];
+  }
+
+  /**
+   * Merges the geometries of multiple unordered segments into a single LineString geometry representing a continuous path
+   * @param {Array<string|number>} segmentIds Array of segment IDs
+   * @returns {object} GeoJSON LineString geometry representing the merged path
+   */
+  function mergeSegmentsGeometry(segmentIds) {
+    const segmentsPath = getSegmentsPath(
+      segmentIds,
+      (segmentId) => wmeSdk.DataModel.Segments.getById({ segmentId }),
+      (nodeId) => wmeSdk.DataModel.Nodes.getById({ nodeId }).connectedSegmentIds
+    );
+
+    const coordinates = segmentsPath.reduce((points, { segmentId, direction }) => {
+      const segment = wmeSdk.DataModel.Segments.getById({ segmentId });
+      const segmentGeometry = segment.geometry.coordinates;
+      if (direction === "rev") segmentGeometry.reverse();
+
+      // Remove the last point of the previous segment to avoid duplicate points
+      if (points.length > 0) points.pop();
+      return points.concat(segmentGeometry);
+    }, []);
+
+    return {
+      type: 'LineString',
+      coordinates,
+    };
+  }
+
+  function getGeometryForLineString(lineString, options) {
+    if (options.strictBoundary) {
+      lineString = turf.lineSliceAlong(
+        lineString,
+        options.width / 2 + 1, // spare an extra meter
+        turf.length(lineString, { units: 'meters' }) - options.width / 2 - 1, // spare an extra meter
+        { units: 'meters' },
+      );
+    }
+
+    let geometry = convertToLandmark(lineString, options.width);
+
+    // Remove holes from geometry if requested
+    if (options.removeHoles) {
+      geometry = removeHolesFromGeometry(geometry);
+    }
+
+    return geometry;
+  }
+
+  function ensureMetricUnits(value) {
+    if (!value) return null;
+
+    const userSettings = wmeSdk.Settings.getUserSettings();
+    if (userSettings && !userSettings.isImperial) return value;
+
+    const conversionFactor = 0.3048; // 1 foot = 0.3048 meters
+    return Math.round(value * conversionFactor);
+  }
+
+  /**
+   * Calculates the width of a road segment in meters
+   * @param {string|number} segmentId 
+   * @returns {number|null} The width of the segment in meters, or null if the segment is not found
+   */
+  function getSegmentWidth(segmentId) {
+    const segment = wmeSdk.DataModel.Segments.getById({ segmentId });
+    if (!segment) {
+      console.error(`Segment with ID ${segmentId} not found.`);
+      return null;
+    }
+
+    const segmentAddress = wmeSdk.DataModel.Segments.getAddress({ segmentId });
+    const defaultLaneWidth = (
+      segmentAddress.country.defaultLaneWidthPerRoadType?.[segment.roadType]
+      ?? 330
+    ) / 100;
+
+    const averageNumberOfLanes =
+      ((segment.fromLanesInfo?.numberOfLanes || 1) + (segment.toLanesInfo?.numberOfLanes || 1)) / 2;
+    const averageLaneWidth =
+      ((ensureMetricUnits(segment.fromLanesInfo?.laneWidth) || defaultLaneWidth) +
+        (ensureMetricUnits(segment.toLanesInfo?.laneWidth) || defaultLaneWidth)) /
+      2;
+    return averageLaneWidth * averageNumberOfLanes;
+  }
+
+  /**
+   * Calculates the average width of multiple road segments in meters
+   * @param {Array<string|number>} segmentIds Array of segment IDs
+   * @returns {number} The average width of the segments in meters, rounded to the nearest integer
+   */
+  function getWidthOfSegments(segmentIds) {
+    const widths = segmentIds.map((segmentId) => getSegmentWidth(segmentId));
+    const averageWidth = widths.reduce((sum, width) => sum + width, 0) / widths.length;
+    return Math.round(averageWidth);
+  }
+
+  function getSelectedSegmentsMergedLineString() {
+    const selection = wmeSdk.Editing.getSelection();
+    if (!selection || selection.objectType !== "segment") {
+      console.error('getSelectedSegmentsMergedLineString has been called without active segment selection');
+      return null;
+    }
+
+    return mergeSegmentsGeometry(selection.ids);
+  }
+
+  function getGeometryOfSelection(options) {
+    if (!options.width || isNaN(options.width)) {
+      options.width = getUserSelectedWidth();
+    }
+
+    console.log(`Comment width: ${options.width}`);      
+
+    return getGeometryForLineString(getSelectedSegmentsMergedLineString(), options);
+  }
+
+  function getUserSelectedWidth() {
+    const selCommentWidth = document.getElementById("CommentWidth");
+    if (selCommentWidth.value === "SEG_WIDTH") {
+      const selection = wmeSdk.Editing.getSelection();
+      if (!selection || selection.objectType !== "segment") {
+        console.error("No road selected!");
+        return null;
+      }
+
+      const width = getWidthOfSegments(selection.ids);
+      setlastCommentWidth(NaN);
+      return width;
+    }
+
+    const width = parseInt(selCommentWidth.value, 10);
+    setlastCommentWidth(width);
+    return width;
+  }
+
+  /**
+   * Converts a GeoJSON geometry (usually a LineString) to a Landmark (Polygon) geometry.
+   * @param geometry The GeoJSON geometry to convert.
+   * @param width The width (in meters) of the landmark.
+   */
+  function convertToLandmark(geometry, width) {
+    return turf.buffer(geometry, width / 2, { units: "meters" }).geometry;
+  }
+
+  /**
+   * Saves the last used comment width to session storage
+   * @param {number} CommentWidth The comment width to save
+   */
+  function setlastCommentWidth(CommentWidth) {
+    if (typeof Storage === 'undefined') {
+      console.log('No web storage support');
+      return;
+    }
+
+    if (!CommentWidth || isNaN(CommentWidth)) {
+      // We want to use the default comment width, which is based on the selected segment
+      // So we don't need to save it, and if we already have it in sessionStorage, we can remove it
+      sessionStorage.removeItem("CommentWidth");
+    }
+    sessionStorage.CommentWidth = Number(CommentWidth);
+  }
+
+  /**
+   * Retrieves the last saved comment width from session storage, or returns the default if not found
+   * @param {number} CommentWidth The default comment width to return if none is saved
+   * @returns {number} The last saved comment width, or the default comment width
+   */
+  function getLastCommentWidth(CommentWidth) {
+    if (typeof Storage === 'undefined' || !sessionStorage.CommentWidth) {
+      return Number(CommentWidth); // Default comment width
+    }
+
+    return Number(sessionStorage.CommentWidth);
+  }
+
+  /**
+   * Retrieves the current language setting of the WME interface
+   * @returns {string} The language code (e.g., "us" for English)
+   */
+  function getLanguage() {
+    var wmeLanguage;
+    var urlParts;
+    urlParts = location.pathname.split("/");
+    wmeLanguage = urlParts[1].toLowerCase();
+    if (wmeLanguage === "editor") {
+      wmeLanguage = "us";
+    }
+    return wmeLanguage;
+  }
+
+  /**
+   * Initializes the language strings based on the user's language setting
+   */
+  function intLanguageStrings() {
+    switch (getLanguage()) {
+      default: // English
+        langText = new Array("Select a road and click this button.", "Create New", "Use Existing");
+    }
+  }
+
+  /**
+   * Retrieves the localized string for the given string ID
+   * @param {number|string} stringID The unique identifier for the string
+   * @returns {string} The localized string
+   */
+  function getString(stringID) {
+    return langText[stringID];
+  }
+
   function WMEMapCommentGeometry_init() {
     try {
       let updateMonitor = new WazeWrap.Alerts.ScriptUpdateMonitor(
@@ -743,290 +1027,6 @@
       WazeWrap.Interface.ShowScriptUpdate(SCRIPT_NAME, SCRIPT_VERSION, UPDATE_NOTES, "");
 
       console.log("WME MapCommentGeometry");
-    }
-
-    /**
-     * Given an unordered list of segment IDs, returns an ordered list of segments with direction information, to form a continuous path
-     * @param {Array<string|number>} segmentIds Array of segment IDs
-     * @param {Function} getSegment A function that takes a `segmentId` and returns a segment object
-     * @param {Function} getConnectedSegments A function that takes a `nodeId` and returns an array of connected segment IDs
-     * @returns {Array<{segmentId: string|number, direction: "fwd"|"rev"}>} Ordered array of segments with direction information
-     */
-    function getSegmentsPath(segmentIds, getSegment, getConnectedSegments) {
-      const visitedSegments = new Set();
-      const forwardResult = [],
-        backwardResult = [];
-
-      // Convert segmentIds to a Set for quick lookup
-      const validSegmentIds = new Set(segmentIds);
-
-      // Start traversal from the first segment in the list
-      const initialSegmentId = segmentIds[0];
-      const { fromNodeId, toNodeId } = getSegment(initialSegmentId);
-
-      // Queues for forward and backward traversal
-      const forwardQueue = [];
-      const backwardQueue = [];
-
-      const addToQueue = (queue, nextNodeId) => {
-        const connectedSegments = getConnectedSegments(nextNodeId);
-        for (const connectedSegment of connectedSegments) {
-          if (!validSegmentIds.has(connectedSegment) || visitedSegments.has(connectedSegment)) continue;
-          queue.push({ segmentId: connectedSegment, currentNodeId: nextNodeId });
-        }
-      };
-
-      forwardResult.push({ segmentId: initialSegmentId, direction: "fwd" });
-      visitedSegments.add(initialSegmentId);
-      addToQueue(forwardQueue, toNodeId);
-      addToQueue(backwardQueue, fromNodeId);
-
-      while (forwardQueue.length > 0) {
-        const { segmentId, currentNodeId } = forwardQueue.shift();
-
-        if (visitedSegments.has(segmentId)) continue;
-        visitedSegments.add(segmentId);
-
-        // Query segment details
-        const { fromNodeId, toNodeId } = getSegment(segmentId);
-
-        // Determine the segment's direction
-        const direction = currentNodeId === fromNodeId ? "fwd" : "rev";
-        forwardResult.push({ segmentId, direction });
-
-        // Get the next node to traverse
-        const nextNodeId = direction === "fwd" ? toNodeId : fromNodeId;
-        addToQueue(forwardQueue, nextNodeId);
-      }
-
-      while (backwardQueue.length > 0) {
-        const { segmentId, currentNodeId } = backwardQueue.shift();
-
-        if (visitedSegments.has(segmentId)) continue;
-        visitedSegments.add(segmentId);
-
-        // Query segment details
-        const { fromNodeId, toNodeId } = getSegment(segmentId);
-
-        // Determine the segment's direction
-        const direction = currentNodeId === fromNodeId ? "rev" : "fwd";
-        backwardResult.push({ segmentId, direction });
-
-        // Get the next node to traverse
-        const nextNodeId = direction === "fwd" ? fromNodeId : toNodeId;
-        addToQueue(backwardQueue, nextNodeId);
-      }
-
-      return [...backwardResult.reverse(), ...forwardResult];
-    }
-
-    /**
-     * Merges the geometries of multiple unordered segments into a single LineString geometry representing a continuous path
-     * @param {Array<string|number>} segmentIds Array of segment IDs
-     * @returns {object} GeoJSON LineString geometry representing the merged path
-     */
-    function mergeSegmentsGeometry(segmentIds) {
-      const segmentsPath = getSegmentsPath(
-        segmentIds,
-        (segmentId) => wmeSdk.DataModel.Segments.getById({ segmentId }),
-        (nodeId) => wmeSdk.DataModel.Nodes.getById({ nodeId }).connectedSegmentIds
-      );
-
-      const coordinates = segmentsPath.reduce((points, { segmentId, direction }) => {
-        const segment = wmeSdk.DataModel.Segments.getById({ segmentId });
-        const segmentGeometry = segment.geometry.coordinates;
-        if (direction === "rev") segmentGeometry.reverse();
-
-        // Remove the last point of the previous segment to avoid duplicate points
-        if (points.length > 0) points.pop();
-        return points.concat(segmentGeometry);
-      }, []);
-
-      return {
-        type: 'LineString',
-        coordinates,
-      };
-    }
-
-    function getGeometryForLineString(lineString, options) {
-      if (options.strictBoundary) {
-        lineString = turf.lineSliceAlong(
-          lineString,
-          options.width / 2 + 1, // spare an extra meter
-          turf.length(lineString, { units: 'meters' }) - options.width / 2 - 1, // spare an extra meter
-          { units: 'meters' },
-        );
-      }
-
-      let geometry = convertToLandmark(lineString, options.width);
-
-      // Remove holes from geometry if requested
-      if (options.removeHoles) {
-        geometry = removeHolesFromGeometry(geometry);
-      }
-
-      return geometry;
-    }
-
-    function ensureMetricUnits(value) {
-      if (!value) return null;
-
-      const userSettings = wmeSdk.Settings.getUserSettings();
-      if (userSettings && !userSettings.isImperial) return value;
-
-      const conversionFactor = 0.3048; // 1 foot = 0.3048 meters
-      return Math.round(value * conversionFactor);
-    }
-
-    /**
-     * Calculates the width of a road segment in meters
-     * @param {string|number} segmentId 
-     * @returns {number|null} The width of the segment in meters, or null if the segment is not found
-     */
-    function getSegmentWidth(segmentId) {
-      const segment = wmeSdk.DataModel.Segments.getById({ segmentId });
-      if (!segment) {
-        console.error(`Segment with ID ${segmentId} not found.`);
-        return null;
-      }
-
-      const segmentAddress = wmeSdk.DataModel.Segments.getAddress({ segmentId });
-      const defaultLaneWidth = (
-        segmentAddress.country.defaultLaneWidthPerRoadType?.[segment.roadType]
-        ?? 330
-      ) / 100;
-
-      const averageNumberOfLanes =
-        ((segment.fromLanesInfo?.numberOfLanes || 1) + (segment.toLanesInfo?.numberOfLanes || 1)) / 2;
-      const averageLaneWidth =
-        ((ensureMetricUnits(segment.fromLanesInfo?.laneWidth) || defaultLaneWidth) +
-          (ensureMetricUnits(segment.toLanesInfo?.laneWidth) || defaultLaneWidth)) /
-        2;
-      return averageLaneWidth * averageNumberOfLanes;
-    }
-
-    /**
-     * Calculates the average width of multiple road segments in meters
-     * @param {Array<string|number>} segmentIds Array of segment IDs
-     * @returns {number} The average width of the segments in meters, rounded to the nearest integer
-     */
-    function getWidthOfSegments(segmentIds) {
-      const widths = segmentIds.map((segmentId) => getSegmentWidth(segmentId));
-      const averageWidth = widths.reduce((sum, width) => sum + width, 0) / widths.length;
-      return Math.round(averageWidth);
-    }
-
-    function getSelectedSegmentsMergedLineString() {
-      const selection = wmeSdk.Editing.getSelection();
-      if (!selection || selection.objectType !== "segment") {
-        console.error('getSelectedSegmentsMergedLineString has been called without active segment selection');
-        return null;
-      }
-
-      return mergeSegmentsGeometry(selection.ids);
-    }
-
-    function getGeometryOfSelection(options) {
-      if (!options.width || isNaN(options.width)) {
-        options.width = getUserSelectedWidth();
-      }
-
-      console.log(`Comment width: ${options.width}`);      
-
-      return getGeometryForLineString(getSelectedSegmentsMergedLineString(), options);
-    }
-
-    function getUserSelectedWidth() {
-      const selCommentWidth = document.getElementById("CommentWidth");
-      if (selCommentWidth.value === "SEG_WIDTH") {
-        const selection = wmeSdk.Editing.getSelection();
-        if (!selection || selection.objectType !== "segment") {
-          console.error("No road selected!");
-          return null;
-        }
-
-        const width = getWidthOfSegments(selection.ids);
-        setlastCommentWidth(NaN);
-        return width;
-      }
-
-      const width = parseInt(selCommentWidth.value, 10);
-      setlastCommentWidth(width);
-      return width;
-    }
-
-    /**
-     * Converts a GeoJSON geometry (usually a LineString) to a Landmark (Polygon) geometry.
-     * @param geometry The GeoJSON geometry to convert.
-     * @param width The width (in meters) of the landmark.
-     */
-    function convertToLandmark(geometry, width) {
-      return turf.buffer(geometry, width / 2, { units: "meters" }).geometry;
-    }
-
-    /**
-     * Saves the last used comment width to session storage
-     * @param {number} CommentWidth The comment width to save
-     */
-    function setlastCommentWidth(CommentWidth) {
-      if (typeof Storage === 'undefined') {
-        console.log('No web storage support');
-        return;
-      }
-
-      if (!CommentWidth || isNaN(CommentWidth)) {
-        // We want to use the default comment width, which is based on the selected segment
-        // So we don't need to save it, and if we already have it in sessionStorage, we can remove it
-        sessionStorage.removeItem("CommentWidth");
-      }
-      sessionStorage.CommentWidth = Number(CommentWidth);
-    }
-
-    /**
-     * Retrieves the last saved comment width from session storage, or returns the default if not found
-     * @param {number} CommentWidth The default comment width to return if none is saved
-     * @returns {number} The last saved comment width, or the default comment width
-     */
-    function getLastCommentWidth(CommentWidth) {
-      if (typeof Storage === 'undefined' || !sessionStorage.CommentWidth) {
-        return Number(CommentWidth); // Default comment width
-      }
-
-      return Number(sessionStorage.CommentWidth);
-    }
-
-    /**
-     * Retrieves the current language setting of the WME interface
-     * @returns {string} The language code (e.g., "us" for English)
-     */
-    function getLanguage() {
-      var wmeLanguage;
-      var urlParts;
-      urlParts = location.pathname.split("/");
-      wmeLanguage = urlParts[1].toLowerCase();
-      if (wmeLanguage === "editor") {
-        wmeLanguage = "us";
-      }
-      return wmeLanguage;
-    }
-
-    /**
-     * Initializes the language strings based on the user's language setting
-     */
-    function intLanguageStrings() {
-      switch (getLanguage()) {
-        default: // English
-          langText = new Array("Select a road and click this button.", "Create New", "Use Existing");
-      }
-    }
-
-    /**
-     * Retrieves the localized string for the given string ID
-     * @param {number|string} stringID The unique identifier for the string
-     * @returns {string} The localized string
-     */
-    function getString(stringID) {
-      return langText[stringID];
     }
 
     intLanguageStrings();
