@@ -1,17 +1,17 @@
 // ==UserScript==
-// @name 			WME MapCommentGeometry
-// @author			YUL_
-// @description 	This script allows creating various map features around selected road segments. Additionally, it allows creating map comments shaped as cameras and arrows.
-// @match			*://*.waze.com/*editor*
-// @exclude			*://*.waze.com/user/editor*
-// @grant 			none
-// @require			https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
-// @require			https://cdn.jsdelivr.net/gh/TheEditorX/wme-sdk-plus@1.2/wme-sdk-plus.js
-// @require			https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js
-// @downloadURL		https://raw.githubusercontent.com/YULWaze/WME-MapCommentGeometry/main/WME%20MapCommentGeometry.user.js
-// @updateURL		https://raw.githubusercontent.com/YULWaze/WME-MapCommentGeometry/main/WME%20MapCommentGeometry.user.js
-// @supportURL		https://github.com/YULWaze/WME-MapCommentGeometry/issues/new/choose
-// @version 		2025.12.5
+// @name          WME MapCommentGeometry
+// @author        YUL_
+// @description   This script allows creating various map features around selected road segments. Additionally, it allows creating map comments shaped as cameras and arrows.
+// @match         *://*.waze.com/*editor*
+// @exclude       *://*.waze.com/user/editor*
+// @grant         none
+// @require       https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
+// @require       https://cdn.jsdelivr.net/gh/TheEditorX/wme-sdk-plus@1.2/wme-sdk-plus.js
+// @require       https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js
+// @downloadURL   https://raw.githubusercontent.com/YULWaze/WME-MapCommentGeometry/main/WME%20MapCommentGeometry.user.js
+// @updateURL     https://raw.githubusercontent.com/YULWaze/WME-MapCommentGeometry/main/WME%20MapCommentGeometry.user.js
+// @supportURL    https://github.com/YULWaze/WME-MapCommentGeometry/issues/new/choose
+// @version       2025.12.5
 // ==/UserScript==
 
 /* global W */
@@ -21,6 +21,8 @@
 /* global $ */
 /* global _ */
 /* global WazeWrap */
+/* global SDK_INITIALIZED */
+/* global getWmeSdk */
 /* eslint curly: ["warn", "multi-or-nest"] */
 
 // Hacked together by YUL_ based on WME Street to River and WME Wazer Creater
@@ -28,28 +30,6 @@
 // Thanks to DeviateFromThePlan for cleaning up the code
 // Thanks to LihtsaltMats for suggesting cleaner placement for the buttons and implementing that
 // Thanks to r0den for allowing the note to be created directly on the segment and cleaning up the code.  Also, r0den is a machine!
-
-// Instructions
-// 1) Install this script in Tampermonkey.
-// 2) Select a road in WME (you can create a new one in the shape of the Map Note you want to make).
-// 3) Choose the width of the Map Comment from the dropdown or keep the default.
-// 4) Click the "Create New" button at the bottom of the left pane or click the "Use Existing" button and then click on an existing Map Note to change its geometry to surround the selected road segment.
-// 5) If you want to convert a point note to a camera or arrow-shaped area, create a new Map Note or select an existing one, and then click the corresponding button.
-// If required, use WME PIE to rotate the resulting shape.
-
-/*
-To do:
-
-- Clean up and simplify the code
-
-- This will sometimes create map comments with invalid geometry based on how the original road is shaped.
-It could be interesting to simplify the map comment geometry accordingly.
-See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
-
-- Allow this script to place a map comment on multiple selected segments
-
-- Feedback:
-*/
 
 (async function () {
   await SDK_INITIALIZED;
