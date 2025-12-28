@@ -968,11 +968,11 @@
         const width = getWidthOfSegments(selection.ids);
         setlastCommentWidth(NaN);
         return width;
-      } else {
-        const width = parseInt(selCommentWidth.value, 10);
-        setlastCommentWidth(width);
-        return width;
       }
+
+      const width = parseInt(selCommentWidth.value, 10);
+      setlastCommentWidth(width);
+      return width;
     }
 
     /**
@@ -989,18 +989,17 @@
      * @param {number} CommentWidth The comment width to save
      */
     function setlastCommentWidth(CommentWidth) {
-      if (typeof Storage !== "undefined") {
-        // 2013-06-09: Yes! localStorage and sessionStorage support!
-        if (!CommentWidth || isNaN(CommentWidth)) {
-          // We want to use the default comment width, which is based on the selected segment
-          // So we don't need to save it, and if we already have it in sessionStorage, we can remove it
-          sessionStorage.removeItem("CommentWidth");
-        }
-        sessionStorage.CommentWidth = Number(CommentWidth);
-      } else {
-        // Sorry! No web storage support..
-        console.log("No web storage support");
+      if (typeof Storage === 'undefined') {
+        console.log('No web storage support');
+        return;
       }
+
+      if (!CommentWidth || isNaN(CommentWidth)) {
+        // We want to use the default comment width, which is based on the selected segment
+        // So we don't need to save it, and if we already have it in sessionStorage, we can remove it
+        sessionStorage.removeItem("CommentWidth");
+      }
+      sessionStorage.CommentWidth = Number(CommentWidth);
     }
 
     /**
@@ -1009,13 +1008,11 @@
      * @returns {number} The last saved comment width, or the default comment width
      */
     function getLastCommentWidth(CommentWidth) {
-      if (typeof Storage !== "undefined") {
-        // 2013-06-09: Yes! localStorage and sessionStorage support!
-        if (sessionStorage.CommentWidth) return Number(sessionStorage.CommentWidth);
-        else return Number(CommentWidth); // Default comment width
-      } else {
+      if (typeof Storage === 'undefined' || !sessionStorage.CommentWidth) {
         return Number(CommentWidth); // Default comment width
       }
+
+      return Number(sessionStorage.CommentWidth);
     }
 
     /**
