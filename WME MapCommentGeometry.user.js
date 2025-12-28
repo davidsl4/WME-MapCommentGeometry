@@ -36,11 +36,89 @@
   const UPDATE_NOTES = "Fixed polygon geometry for school zones and places to remove holes (requested by Waze HQ for tile build compatibility)";
   const SCRIPT_NAME = GM_info.script.name;
   const SCRIPT_VERSION = GM_info.script.version;
-  const idExistingMapComment = 2;
   const wmeSdk = getWmeSdk({ scriptId: "wme-map-comment-geometry", scriptName: "WME Map Comment Geometry" });
   if (!wmeSdk.State.isInitialized())
     await wmeSdk.Events.once({ eventName: "wme-initialized" });
   initWmeSdkPlus(wmeSdk);
+
+  /** Localization module: provides all the translations and integrations with WME I18n */
+  const Localization = {
+    /** Indicates whether the localization strings have been injected into WME I18n */
+    _injected: false,
+    /** The unique prefix used for nested translations used only by this script */
+    _NEST_PREFIX: 'script:' + wmeSdk.getScriptId(),
+    /** The localization strings grouped by language */
+    strings: {
+      en: {
+        geometry_transformation_buttons: {
+          create_new: 'Create %{featureType}',
+          use_existing: 'Use Existing',
+        },
+      },
+    },
+    /**
+     * Retrieves the current WME locale code
+     * @returns {string} The current WME locale code (e.g., 'en', 'en-US', 'fr', 'de', etc.)
+     */
+    _getLanguage: function () {
+      return wmeSdk.Settings.getLocale().localeCode;
+    },
+    /**
+     * Retrieves the localization strings for a given language, with optional dialect fallback
+     * @param {string} locale The locale code to retrieve strings for
+     * @param {boolean} allowDialects Whether to allow fallback to base locale if specific locale is not found
+     * @returns {object} The localization strings for the given locale, or English strings if not found
+     */
+    _getStringsForLanguage: function (locale, allowDialects = true) {
+      let strings = this.strings[locale];
+      if (!strings && allowDialects && locale.indexOf('-') !== -1) {
+        const baseLocale = locale.split('-')[0];
+        strings = this.strings[baseLocale];
+      }
+
+      return strings || this.strings['en'];
+    },
+    /** Injects the localization strings into WME I18n if not already injected */
+    _inject: function () {
+      if (this._injected) return;
+      this._injected = true;
+      const lang = this._getLanguage();
+      const strings = this._getStringsForLanguage(lang, true);
+      I18n.translations[lang][this._NEST_PREFIX] = strings;
+    },
+    /**
+     * Translates a string ID using WME I18n, first trying the nested translation, then falling back to native translation
+     * @param {string} stringId The string ID to translate
+     * @param  {...any} variables Variables to pass to the translation
+     * @returns {string} The translated string
+     */
+    t: function (stringId, ...variables) {
+      this._inject();
+      const prefixedId = this._NEST_PREFIX + '.' + stringId;
+
+      const originalMissingTranslation = I18n.missingTranslation;
+      I18n.missingTranslation = function (key) {
+        if (key === prefixedId)
+          throw new Error('missing_translation');
+
+        return originalMissingTranslation.apply(this, arguments);
+      };
+
+      try {
+        const result = I18n.t(prefixedId, ...variables);
+        return result;
+      } catch (e) {
+        if (!(e instanceof Error) || e.message !== 'missing_translation') throw e;
+
+        // the nested translation is missing, it might be a native string
+        I18n.missingTranslation = originalMissingTranslation; // restore native handler before calling for native string
+        return I18n.t(stringId, ...variables);
+      }
+      finally {
+        I18n.missingTranslation = originalMissingTranslation;
+      }
+    },
+  }
 
   const CameraLeftPoints = [
     [11, 6],
@@ -786,40 +864,6 @@
     return Number(sessionStorage.CommentWidth);
   }
 
-  /**
-   * Retrieves the current language setting of the WME interface
-   * @returns {string} The language code (e.g., "us" for English)
-   */
-  function getLanguage() {
-    var wmeLanguage;
-    var urlParts;
-    urlParts = location.pathname.split("/");
-    wmeLanguage = urlParts[1].toLowerCase();
-    if (wmeLanguage === "editor") {
-      wmeLanguage = "us";
-    }
-    return wmeLanguage;
-  }
-
-  /**
-   * Initializes the language strings based on the user's language setting
-   */
-  function intLanguageStrings() {
-    switch (getLanguage()) {
-      default: // English
-        langText = new Array("Select a road and click this button.", "Create New", "Use Existing");
-    }
-  }
-
-  /**
-   * Retrieves the localized string for the given string ID
-   * @param {number|string} stringID The unique identifier for the string
-   * @returns {string} The localized string
-   */
-  function getString(stringID) {
-    return langText[stringID];
-  }
-
   function WMEMapCommentGeometry_init() {
     try {
       let updateMonitor = new WazeWrap.Alerts.ScriptUpdateMonitor(
@@ -833,8 +877,6 @@
       // Report, but don't stop if ScriptUpdateMonitor fails.
       console.log(ex.message);
     }
-
-    var langText;
 
     function addWMESelectSegmentbutton() {
       if (!wmeSdk.Editing.getSelection()) return;
@@ -891,7 +933,9 @@
 
       const createNewFeatureButton = (featureType, addNewFeature, geometryOptions) => {
         const $createBtn = $(
-          `<wz-button style="--space-button-text: 100%;" size="sm" color="text">Create ${getFeatureHumanReadableName(featureType)}</wz-button>`
+          `<wz-button style="--space-button-text: 100%;" size="sm" color="text">${Localization.t('geometry_transformation_buttons.create_new', {
+            featureType: getFeatureHumanReadableName(featureType)
+          })}</wz-button>`
         );
         $createBtn.click((e) => e.target.blur()); // Prevent focus on the button
         $createBtn.click(() => {
@@ -933,8 +977,8 @@
       mapNoteWidthControls.append(selCommentWidth);
 
       const $useBtn = $(
-        `<wz-button style="--space-button-text: 100%;" size="sm" color="text">${getString(
-          idExistingMapComment
+        `<wz-button style="--space-button-text: 100%;" size="sm" color="text">${Localization.t(
+          'geometry_transformation_buttons.use_existing'
         )}</wz-button>`
       );
       $useBtn.click((e) => e.target.blur()); // Prevent focus on the button
@@ -1028,8 +1072,6 @@
 
       console.log("WME MapCommentGeometry");
     }
-
-    intLanguageStrings();
 
     const addFeatureEditorOpenedHandler = (featureType, handler) => {
       wmeSdk.Events.on({
