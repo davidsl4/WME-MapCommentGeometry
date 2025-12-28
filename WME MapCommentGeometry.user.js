@@ -36,8 +36,6 @@
   const UPDATE_NOTES = "Fixed polygon geometry for school zones and places to remove holes (requested by Waze HQ for tile build compatibility)";
   const SCRIPT_NAME = GM_info.script.name;
   const SCRIPT_VERSION = GM_info.script.version;
-  const idTitle = 0;
-  const idNewMapComment = 1;
   const idExistingMapComment = 2;
   const wmeSdk = getWmeSdk({ scriptId: "wme-map-comment-geometry", scriptName: "WME Map Comment Geometry" });
   if (!wmeSdk.State.isInitialized())
@@ -128,12 +126,6 @@
     [-6, 6],
     [-6, -18],
   ];
-
-  // Default widths of the Map Comment around the existing road depending on road type
-  // sel.attributes.roadType: 1 = Street, 2 = PS, 3 = Freeway, 4 = Ramp, 6 = MH, 7 = mH, 8 = Offroad, 17 = Private, 20 = Parking lot
-  //	const CommentWidths = [15,20,40,15,15,30,30];
-  const DefaultCommentWidth = 10;
-  let TheCommentWidth;
 
 	function hasSelectedFeatures(featureType) {
 		const selection = wmeSdk.Editing.getSelection();
@@ -277,17 +269,6 @@
 
 		lockRegion.before(joysticksContainers);
 	}
-
-  async function waitForMapCommentSelection() {
-    if (hasSelectedFeatures('mapComment')) return wmeSdk.Editing.getSelection().ids[0];
-
-    await wmeSdk.Events.once({
-      eventName: "wme-selection-changed",
-    });
-
-    if (hasSelectedFeatures('mapComment')) return wmeSdk.Editing.getSelection().ids[0];
-    return null;
-  }
 
    /**
    * Removes holes from a polygon geometry, keeping only the outer ring.
@@ -667,11 +648,8 @@
       // Add dropdown for comment width
       const selCommentWidth = $('<wz-select id="CommentWidth" style="flex: 1" />');
       selCommentWidth.append($('<wz-option value="SEG_WIDTH">Infer</wz-option>'));
-//      selCommentWidth.append($('<wz-option value="5">5 m</wz-option>'));
       selCommentWidth.append($('<wz-option value="10">10 m</wz-option>'));
-//      selCommentWidth.append($('<wz-option value="15">15 m</wz-option>'));
       selCommentWidth.append($('<wz-option value="20">20 m</wz-option>'));
-//      selCommentWidth.append($('<wz-option value="25">25 m</wz-option>'));
       selCommentWidth.append($('<wz-option value="30">30 m</wz-option>'));
       selCommentWidth.append($('<wz-option value="40">40 m</wz-option>'));
       selCommentWidth.append($('<wz-option value="50">50 m</wz-option>'));
@@ -1002,7 +980,7 @@
      * @param geometry The GeoJSON geometry to convert.
      * @param width The width (in meters) of the landmark.
      */
-    function convertToLandmark(geometry, width = TheCommentWidth) {
+    function convertToLandmark(geometry, width) {
       return turf.buffer(geometry, width / 2, { units: "meters" }).geometry;
     }
 
