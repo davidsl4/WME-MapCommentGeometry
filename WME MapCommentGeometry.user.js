@@ -318,6 +318,11 @@
     throw new Error('Unsupported geometry type for removing holes: ' + geometry.type);
   }
 
+  /**
+   * Converts a line geometry to an arrow-shaped polygon geometry
+   * @param {object} line GeoJSON LineString geometry
+   * @returns {object} GeoJSON Polygon geometry representing the arrow
+   */
   function convertLineToArrow(line) {
     const lastPoint = line.coordinates[line.coordinates.length - 1];
     const secondLastPoint = line.coordinates[line.coordinates.length - 2];
@@ -461,6 +466,17 @@
     WMEMapCommentGeometry_init();
   }
 
+  /**
+   * Creates and appends a snackbar with the given options, labels, and buttons to the map message container
+   * @param {object} options A set of options for the snackbar
+   * @param {string} options.label The label to show in the snackbar
+   * @param {object} [options.button] An optional button to show in the snackbar
+   * @param {string} options.button.label The label of the button
+   * @param {function} options.button.onClick The click handler for the button
+   * @param {boolean} [options.closeAutomatically=true] Whether to close the snackbar automatically after a timeout
+   * @param {boolean} [options.showCloseButton=true] Whether to show the close button on the snackbar
+   * @returns {object} An object with methods to show, hide, and remove the snackbar, and a reference to the button element (if any)
+   */
   function createSnackbar(options) {
     const { label, button, closeAutomatically = true, showCloseButton = true } = options;
 
@@ -500,12 +516,23 @@
     }
   }
 
+  /**
+   * Waits for a specific event to be fired on a given element
+   * @param {Element} element The element to listen on
+   * @param {string} eventName The name of the event to wait for
+   * @returns {Promise<void>} A promise that resolves when the event is fired
+   */
   function waitForEvent(element, eventName) {
     return new Promise((resolve) => {
       element.addEventListener(eventName, () => resolve(), { once: true });
     });
   }
 
+  /**
+   * Retrieves a permanent hazard by its ID, checking multiple subtypes to find the correct one
+   * @param {string} permanentHazardId The ID of the permanent hazard to retrieve
+   * @returns {object} An object containing the type and the permanent hazard data
+   */
   function getPermanentHazard(permanentHazardId) {
     const getters = {
       'camera': () => wmeSdk.DataModel.PermanentHazards.getCameraById({ cameraId: permanentHazardId }),
@@ -527,6 +554,11 @@
     };
   }
 
+  /**
+   * Updates a permanent hazard by its ID and given arguments, handling different subtypes appropriately
+   * @param {string|number} permanentHazardId The ID of the permanent hazard to update
+   * @param {object} args The arguments to update the permanent hazard with
+   */
   function updatePermanentHazard(permanentHazardId, args) {
     const { type } = getPermanentHazard(permanentHazardId);
 
@@ -755,6 +787,13 @@
       console.log("WME MapCommentGeometry");
     }
 
+    /**
+     * Given an unordered list of segment IDs, returns an ordered list of segments with direction information, to form a continuous path
+     * @param {Array<string|number>} segmentIds Array of segment IDs
+     * @param {Function} getSegment A function that takes a `segmentId` and returns a segment object
+     * @param {Function} getConnectedSegments A function that takes a `nodeId` and returns an array of connected segment IDs
+     * @returns {Array<{segmentId: string|number, direction: "fwd"|"rev"}>} Ordered array of segments with direction information
+     */
     function getSegmentsPath(segmentIds, getSegment, getConnectedSegments) {
       const visitedSegments = new Set();
       const forwardResult = [],
@@ -823,6 +862,11 @@
       return [...backwardResult.reverse(), ...forwardResult];
     }
 
+    /**
+     * Merges the geometries of multiple unordered segments into a single LineString geometry representing a continuous path
+     * @param {Array<string|number>} segmentIds Array of segment IDs
+     * @returns {object} GeoJSON LineString geometry representing the merged path
+     */
     function mergeSegmentsGeometry(segmentIds) {
       const segmentsPath = getSegmentsPath(
         segmentIds,
@@ -876,6 +920,11 @@
       return Math.round(value * conversionFactor);
     }
 
+    /**
+     * Calculates the width of a road segment in meters
+     * @param {string|number} segmentId 
+     * @returns {number|null} The width of the segment in meters, or null if the segment is not found
+     */
     function getSegmentWidth(segmentId) {
       const segment = wmeSdk.DataModel.Segments.getById({ segmentId });
       if (!segment) {
@@ -898,6 +947,11 @@
       return averageLaneWidth * averageNumberOfLanes;
     }
 
+    /**
+     * Calculates the average width of multiple road segments in meters
+     * @param {Array<string|number>} segmentIds Array of segment IDs
+     * @returns {number} The average width of the segments in meters, rounded to the nearest integer
+     */
     function getWidthOfSegments(segmentIds) {
       const widths = segmentIds.map((segmentId) => getSegmentWidth(segmentId));
       const averageWidth = widths.reduce((sum, width) => sum + width, 0) / widths.length;
@@ -952,7 +1006,10 @@
       return turf.buffer(geometry, width / 2, { units: "meters" }).geometry;
     }
 
-    // 2013-06-09: Save current comment Width
+    /**
+     * Saves the last used comment width to session storage
+     * @param {number} CommentWidth The comment width to save
+     */
     function setlastCommentWidth(CommentWidth) {
       if (typeof Storage !== "undefined") {
         // 2013-06-09: Yes! localStorage and sessionStorage support!
@@ -968,7 +1025,11 @@
       }
     }
 
-    // 2013-06-09: Returns last saved comment width
+    /**
+     * Retrieves the last saved comment width from session storage, or returns the default if not found
+     * @param {number} CommentWidth The default comment width to return if none is saved
+     * @returns {number} The last saved comment width, or the default comment width
+     */
     function getLastCommentWidth(CommentWidth) {
       if (typeof Storage !== "undefined") {
         // 2013-06-09: Yes! localStorage and sessionStorage support!
@@ -979,7 +1040,10 @@
       }
     }
 
-    // 2014-06-05: Returns WME interface language
+    /**
+     * Retrieves the current language setting of the WME interface
+     * @returns {string} The language code (e.g., "us" for English)
+     */
     function getLanguage() {
       var wmeLanguage;
       var urlParts;
@@ -991,15 +1055,21 @@
       return wmeLanguage;
     }
 
-    // 2014-06-05: Translate text to different languages
+    /**
+     * Initializes the language strings based on the user's language setting
+     */
     function intLanguageStrings() {
       switch (getLanguage()) {
-        default: // 2014-06-05: English
+        default: // English
           langText = new Array("Select a road and click this button.", "Create New", "Use Existing");
       }
     }
 
-    // 2014-06-05: Returns the translated string to current language, if the language is not recognized assumes English
+    /**
+     * Retrieves the localized string for the given string ID
+     * @param {number|string} stringID The unique identifier for the string
+     * @returns {string} The localized string
+     */
     function getString(stringID) {
       return langText[stringID];
     }
