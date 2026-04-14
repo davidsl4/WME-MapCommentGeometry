@@ -744,7 +744,7 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
             type: 'mapComment',
             id: wmeSdk.DataModel.MapComments.addMapComment({
               geometry,
-            }),
+            }).toString(),
           }
         }, getFeatureGeometryOptions('mapComment')),
         createNewFeatureButton('venue', (geometry) => {
@@ -753,7 +753,7 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
             id: wmeSdk.DataModel.Venues.addVenue({
               category: 'OTHER',
               geometry,
-            }),
+            }).toString(),
           }
         }, getFeatureGeometryOptions('venue')),
         createNewFeatureButton('permanentHazard.schoolZone', (geometry) => {
