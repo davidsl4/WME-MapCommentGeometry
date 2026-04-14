@@ -1028,7 +1028,7 @@ See simplify.js by Volodymyr Agafonkin (https://github.com/mourner/simplify-js)
 
     const addFeatureEditorOpenedHandler = (featureType, handler) => {
       wmeSdk.Events.on({
-        eventName: "wme-feature-editor-rendered",
+        eventName: "wme-feature-editor-opened",
         eventHandler: (e) => {
           if (e.featureType !== featureType) return;
           handler(e);
